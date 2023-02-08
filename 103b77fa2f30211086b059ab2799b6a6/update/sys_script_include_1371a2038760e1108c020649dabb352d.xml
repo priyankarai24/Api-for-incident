@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>package_private</access>
+        <active>true</active>
+        <api_name>global.UpdateIncidentDetailsUtil</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <name>UpdateIncidentDetailsUtil</name>
+        <script><![CDATA[var UpdateIncidentDetailsUtil = Class.create();
+    UpdateIncidentDetailsUtil.prototype = {
+        initialize: function (incNumber, comms, desc, incState, incGroup) {
+            this.incNumber = incNumber;
+            this.comms = comms;
+            this.desc = desc;
+            this.incState = incState;
+            this.incGroup = incGroup;
+            this.assignedTo = '';
+
+            this.MESSAGES = {
+                INCIDENT_NOT_FOUND: 'Incident number does not exists in the record. Please provide a valid incident number',
+                INCIDENT_EMPTY: 'No incident number provided. Please send incident number.',
+                STATE_DOES_NOT_EXISTS: 'Provided state does not exists for incidents. Please provide a valid state',
+                GROUP_DOES_NOT_EXISTS: 'Provided assignment group does not exists or is inactive. Please provide a valid group name',
+                INCIDENT_UPDATED_SUCCESSFULLY: 'Incident updated successfully.',
+                COMMENT_UPDATED_SUCCESSFULLY: 'Comment updated successfully for incident number ',
+                DESCRIPTION_UPDATED_SUCCESSFULLY: 'Discription updated successfully for incident number ',
+                STATE_UPDATED_SUCCESSFULLY: 'State updated successfully for incident number ',
+                GROUP_UPDATED_SUCCESSFULLY: 'Assignment group updated successfully for incident number ',
+            };
+
+            this.TABLE = {
+                INCIDENT_TABLE: 'incident',
+                ASSIGNMENT_GROUP_TABLE: 'sys_user_group',
+                CHOICE_TABLE: 'sys_choice',
+                ASSIGNMENT_GROUPS_TABLE: 'sys_user_group'
+            };
+
+            this.INCIDENT_FIELDS = {
+                INCIDENT_NUMBER: 'number',
+                INCIDENT_COMMENTS: 'comments',
+                INCIDENT_ASSIGNMENT_GROUP: 'assignment_group',
+                INCIDENT_DESCRIPTION: 'description',
+                INCIDENT_STATE: 'state'
+        
+            };
+        },
+
+        /**
+         * This is the method from where the processing will start.
+        */
+        processInboundApi: function () {
+            //Check that incident number is not empty
+            var checkIncNum = this._checkIncNumExists();
+            if (typeof checkIncNum == 'number') {
+                //check what information has been provided and update it in the incident table.
+                var updComments = this._updateIncComments();
+                var updDesc = this._updateIncDescription();
+                var updState = this._updateIncidentState();
+                var updAssGrp = this._updateAssignmentGroup();
+
+                var allMsgs = this._filter_list([updComments, updDesc, updState, updAssGrp]);
+                if(allMsgs.length <= 0){
+                    return this.MESSAGES.INCIDENT_UPDATED_SUCCESSFULLY;
+                }else{
+                    return allMsgs.toString();
+                }
+            } else {
+                return checkIncNum;
+            }
+        },
+
+        /**
+         * Remove all numbers from array
+        */
+        _filter_list: function (arr) {
+            var filtered = arr.filter(function (el) {
+                return el != null;
+              });
+            return filtered.join(" -- ");
+        },
+
+        /**
+         * This method updates the assignment group in the incident.
+         * It also empties the assigned to field.
+        */
+       _updateAssignmentGroup: function () {
+            if (this.incGroup != '' && typeof this.incGroup != 'undefined' && this.incGroup != null) {
+                //check assignment group is a valid name.
+                var grpSid = this._checkAndGetGroup(this.incGroup);
+                if (grpSid != '') {
+                    //empty assigned to field before changinf the group.
+                    this._emptyAssignedTo();
+                    var upAgp = this._updateTableFields(this.INCIDENT_FIELDS.INCIDENT_ASSIGNMENT_GROUP, this.TABLE.INCIDENT_TABLE, this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber, grpSid);
+                    if(upAgp == 1){
+                        return this.MESSAGES.GROUP_UPDATED_SUCCESSFULLY + this.incNumber; 
+                    }else{
+                        return upAgp;
+                    }
+                } else {
+                    return this.MESSAGES.GROUP_DOES_NOT_EXISTS;
+                }
+            } else {
+                return 3;
+            }
+        },
+
+        /**
+         * This method empties the assignment group field.
+         * @param {String} typeIs if 1 then remove assignment group, else revert it back
+        */
+       _emptyAssignedTo: function(typeIs){
+        var emp = new GlideRecord(this.TABLE.INCIDENT_TABLE);
+        emp.addQuery(this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber);
+        emp.query();
+        if(emp.next()){
+            if(typeIs == 1){
+                this.assignedTo = emp.assigned_to.toString();
+                emp.assigned_to = '';
+            }else{
+                emp.assigned_to = this.assignedTo;
+            }
+
+            emp.update();
+        }
+       },
+
+        /**
+         * This method checks if the assignment group is a valid one
+         * and is active.
+         * @param {String} grpName name of the group that needs to be validated
+         * 
+         * @returns returns the sys_id of the group
+        */
+        _checkAndGetGroup: function (grpName) {
+            var grpValid = new GlideRecord(this.TABLE.ASSIGNMENT_GROUPS_TABLE);
+            grpValid.addEncodedQuery("active=True^nameSTARTSWITH" + grpName);
+            grpValid.query();
+            if (grpValid.next()) {
+                return grpValid.sys_id.toString();
+            } else {
+                return '';
+            }
+        },
+
+        /**
+         * This method checks if state exists for incident. If yes, then update else send error message
+        */
+        _updateIncidentState: function () {
+            if (this.incState != '' && typeof this.incState != 'undefined' && this.incState != null) {
+                //find the state first.
+                var stVal = this._checkIncStateExists(this.incState);
+                if (stVal == '' && stVal != 6) {
+                    return this.MESSAGES.STATE_DOES_NOT_EXISTS;
+                } else if(stVal == 6){
+                    return 'Cannot change the state to resolved. Mandatory fields details like Resolution Notes and Close code needs to be filled.';
+                }else {
+                    var upState = this._updateTableFields(this.INCIDENT_FIELDS.INCIDENT_STATE, this.TABLE.INCIDENT_TABLE, this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber, stVal);
+                    if(upState == 1){
+                        return this.MESSAGES.STATE_UPDATED_SUCCESSFULLY + this.incNumber;
+                    }else{
+                        return upState;
+                    }
+                }
+            } 
+        },
+
+        /** 
+         * This method checks if state exists in the choice table for incident
+         * and it is active.
+         * If exists then return the backend value of state else return error message
+         * @param {String} stateName name of the state against the value has to be fetched.
+         * 
+         * @returns return the name of the state
+        */
+        _checkIncStateExists: function (stateName) {
+            var stExists = new GlideRecord(this.TABLE.CHOICE_TABLE);
+            stExists.addEncodedQuery("nameSTARTSWITHincident^elementSTARTSWITHstate^inactive=false^labelSTARTSWITH" + stateName);
+            stExists.query();
+            if (stExists.next()) {
+                return stExists.getValue('value');
+            } else {
+                return '';
+            }
+        },
+
+        /**
+         * This method checks if comments variable is not empty. If not empty then update it in incident table.
+         * @return {Number} return a number if updated successfully, else returns the message that either failed or empty
+        */
+        _updateIncComments: function () {
+            if (this.comms != '' && typeof this.comms != 'undefined' && this.comms != null) {
+                var upCom = this._updateTableFields(this.INCIDENT_FIELDS.INCIDENT_COMMENTS, this.TABLE.INCIDENT_TABLE, this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber, this.comms.toString());
+                if(upCom == 1){
+                    return this.MESSAGES.COMMENT_UPDATED_SUCCESSFULLY + this.incNumber;
+                }else{
+                    return upCom;
+                }
+            } 
+        },
+
+        /**
+         * This method updates the description field in the table (incident).
+         * If description is empty, simply update it else first get description data
+         * and update the new description a the end.
+        */
+        _updateIncDescription: function () {
+            if (this.desc != '' && typeof this.desc != 'undefined' && this.desc != null) {
+                var des = new GlideRecord(this.TABLE.INCIDENT_TABLE);
+                des.addQuery(this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber);
+                des.query();
+                if (des.next()) {
+                    des.description = (des.description != "" ? des.description + "\n" + this.desc : this.desc);
+                    des.update();
+                    return this.MESSAGES.DESCRIPTION_UPDATED_SUCCESSFULLY + this.incNumber;
+                } else {
+                    return this.MESSAGES.INCIDENT_NOT_FOUND;
+                }
+            } 
+        },
+
+        /**
+         * This method checks if incident number is not empty
+         * It also checks if the incident number exists in the table or not.
+        */
+        _checkIncNumExists: function () {
+            if (this.incNumber == '' && typeof this.incNumber == 'undefined' && this.incNumber == null) {
+                return this.MESSAGES.INCIDENT_EMPTY;
+            } else {
+                var gr = new GlideRecord(this.TABLE.INCIDENT_TABLE);
+                gr.addQuery(this.INCIDENT_FIELDS.INCIDENT_NUMBER, this.incNumber);
+                gr.addQuery('active', 'true');
+                gr.query();
+                if (gr.next()) {
+                    return 2;
+                } else {
+                    return this.MESSAGES.INCIDENT_NOT_FOUND;
+                }
+            }
+        },
+
+        /**
+         * This method updates the field in the table.
+         * @param {String} fieldName name of the field which has to be updated
+         * @param {String} tableName name of the table in which field has to be updated
+         * @param {String} refField field which has to be referenced
+         * @param {String} refValue value that needs to be referenced in the reference field
+         * @param {String} valToUpdt value that needs to be updated in the field.
+         * 
+         * @returns return message if error occurs else return 1
+        */
+        _updateTableFields: function (fieldName, tableName, refField, refValue, valToUpdt) {
+            var updTab = new GlideRecord(tableName);
+            updTab.addQuery(refField, refValue);
+            updTab.query();
+            if (updTab.next()) {
+                updTab[fieldName] = valToUpdt;
+                updTab.update();
+                return 1;
+            } else {
+                return this.MESSAGES.INCIDENT_EMPTY;
+            }
+        },
+
+        type: 'UpdateIncidentDetailsUtil'
+    };]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>praiadmin</sys_created_by>
+        <sys_created_on>2023-01-27 04:04:21</sys_created_on>
+        <sys_id>1371a2038760e1108c020649dabb352d</sys_id>
+        <sys_mod_count>99</sys_mod_count>
+        <sys_name>UpdateIncidentDetailsUtil</sys_name>
+        <sys_package display_value="Global" source="global">global</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="API for incident">103b77fa2f30211086b059ab2799b6a6</sys_scope>
+        <sys_update_name>sys_script_include_1371a2038760e1108c020649dabb352d</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2023-02-08 02:45:58</sys_updated_on>
+    </sys_script_include>
+    <sys_claim action="INSERT_OR_UPDATE">
+        <claim_owner_scope display_value="API for incident">103b77fa2f30211086b059ab2799b6a6</claim_owner_scope>
+        <claim_timestamp>1862eea641f0000001</claim_timestamp>
+        <metadata_update_name>sys_script_include_1371a2038760e1108c020649dabb352d</metadata_update_name>
+        <previous_claim_app_version>1.0.0</previous_claim_app_version>
+        <previous_claim_name>API for incident</previous_claim_name>
+        <previous_claim_scope>103b77fa2f30211086b059ab2799b6a6</previous_claim_scope>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2023-02-08 02:45:58</sys_created_on>
+        <sys_id>77a240072f70211086b059ab2799b6d0</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2023-02-08 02:45:58</sys_updated_on>
+    </sys_claim>
+</record_update>
